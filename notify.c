@@ -18,6 +18,7 @@
 #define BASE_GAMEPATH "/media/fat/games/"
 
 typedef struct inotify_event inotify_event;
+typedef struct dirent dirent;
 
 char current_core[CORE_BUFFER_SIZE];
 char current_game[BUFFER_SIZE];
@@ -30,7 +31,7 @@ void int_handler(int signal) {
     running = false;
 }
 
-void check_error(int error, const char *message) {
+void check_error(int error, const char message[]) {
     if (error < 0) {
         if (!running && errno == EINTR) return;
         perror(message);
@@ -38,9 +39,9 @@ void check_error(int error, const char *message) {
     }
 }
 
-struct dirent *readdir_check(DIR *dir) {
+dirent *readdir_check(DIR *dir) {
     errno = 0;
-    struct dirent *file = readdir(dir);
+    dirent *file = readdir(dir);
     if (file == NULL && errno > 0) {
         perror("readdir failed");
         exit(1);
@@ -48,48 +49,62 @@ struct dirent *readdir_check(DIR *dir) {
     return file;
 }
 
-int add_game_watches(int notify_fd, char *path, int index);
-int add_game_watches(int notify_fd, char *path, int index) {
-    char *path_root = path + strlen(path);
-
+DIR *open_game_dir(const char path[]) {
     DIR *game_dir = opendir(path);
     if (game_dir == NULL) {
         if (errno == ENOENT) {
-            printf("No games directory for %s\n", current_core);
-            return -1;
+            return NULL;
         } else {
             perror("opendir failed");
             exit(1);
         }
     }
+    return game_dir;
+}
+
+bool is_hidden_file(const dirent *file) {
+    return (file->d_name[0] == '.');
+}
+
+bool is_folder(const char path[]) {
+    struct stat file_stat;
+    int error = stat(path, &file_stat);
+    check_error(error, "stat failed");
+    return (file_stat.st_mode & S_IFDIR);
+}
+
+int process_folder(int notify_fd, char path[], int index);
+int process_folder(int notify_fd, char path[], int index) {
+    char *sub_path = path + strlen(path);
+
+    DIR *game_dir = open_game_dir(path);
+    if (game_dir == NULL) return -1;
 
     game_wds[index] = inotify_add_watch(notify_fd, path, IN_ACCESS | IN_ONLYDIR);
     check_error(game_wds[index], "inotify_add_watch failed");
 
-    struct dirent *dir = readdir_check(game_dir);
+    dirent *file = readdir_check(game_dir);
     struct stat file_stat;
-    while (dir != NULL) {
-        if (dir->d_name[0] != '.') {
-            sprintf(path_root, "/%s", dir->d_name);
-            int error = stat(path, &file_stat);
-            check_error(error, "stat failed");
-            if (file_stat.st_mode & S_IFDIR) {
-                index = add_game_watches(notify_fd, path, index + 1);
+    while (file != NULL) {
+        if (!is_hidden_file(file)) {
+            sprintf(sub_path, "/%s", file->d_name);
+            if (is_folder(path)) {
+                index = process_folder(notify_fd, path, index + 1);
             }
         }
-        dir = readdir_check(game_dir);
+        file = readdir_check(game_dir);
     }
 
     int error = closedir(game_dir);
     check_error(error, "closedir failed");
 
-    path_root[0] = '\0';
+    strcpy(sub_path, "");
     return index;
 }
 
-void add_game_watch(int notify_fd, const char *current_core) {
+void add_game_watches(int notify_fd, const char current_core[]) {
 
-    char game_path[500];
+    char game_path[BUFFER_SIZE];
     sprintf(game_path, "%s%s", BASE_GAMEPATH, current_core);
 
     for (int i = 0; i < MAX_SUBFOLDERS && game_wds[i] >= 0; i++) {
@@ -98,10 +113,10 @@ void add_game_watch(int notify_fd, const char *current_core) {
         game_wds[i] = -1;
     }
 
-    add_game_watches(notify_fd, game_path, 0);
+    process_folder(notify_fd, game_path, 0);
 }
 
-void get_core_name(const char *path, char *buffer) {
+void get_core_name(const char path[], char *buffer) {
     int file_fd = open(path, O_RDONLY);
     check_error(file_fd, "open failed");
 
@@ -119,15 +134,18 @@ ssize_t read_events(char *buffer) {
     return bytes_read;
 }
 
+void switch_to_core(const char new_core[]) {
+    strcpy(current_core, new_core);
+    printf("Switched to %s\n", current_core);
+    add_game_watches(notify_fd, current_core);
+}
+
 void process_event(const inotify_event *event) {
     if (event->wd == core_wd) {
         char new_core[CORE_BUFFER_SIZE];
         get_core_name(COREPATH, new_core);
-
         if (new_core[0] != '\0' && strcmp(current_core, new_core) != 0) {
-            strcpy(current_core, new_core);
-            printf("Switched to %s\n", current_core);
-            add_game_watch(notify_fd, current_core);
+            switch_to_core(new_core);
         }
     } else if (event->len > 1 && !(event->mask & IN_ISDIR)) {
         const char *new_game = event->name;
@@ -154,8 +172,8 @@ void initialise() {
 
     add_interrupt_handler();
 
-    current_core[0] = '\0';
-    current_game[0] = '\0';
+    strcpy(current_core, "");
+    strcpy(current_game, "");
 
     notify_fd = inotify_init();
     check_error(notify_fd, "inotify_init failed");
