@@ -84,7 +84,6 @@ int process_folder(int notify_fd, char path[], int index) {
     check_error(game_wds[index], "inotify_add_watch failed");
 
     dirent *file = readdir_check(game_dir);
-    struct stat file_stat;
     while (file != NULL) {
         if (!is_hidden_file(file)) {
             sprintf(sub_path, "/%s", file->d_name);
