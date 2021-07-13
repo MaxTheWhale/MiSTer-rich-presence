@@ -214,9 +214,28 @@ int init_tcp(uint16_t port) {
 void *send_status(void *arg) {
     pthread_detach(pthread_self());
 
+    int connection_fd = *(int*)arg;
+    free(arg);
+
+    char buffer[BUFFER_SIZE];
+
     while (running) {
-        
+        ssize_t bytes_received = recv(connection_fd, buffer, BUFFER_SIZE, 0);
+        check_error((int)bytes_received, "recv failed");
+        buffer[bytes_received] = '\0';
+
+        if (bytes_received == 0) {
+            int error = close(connection_fd);
+            check_error(error, "close failed");
+            return NULL;
+        }
+
+        ssize_t bytes_sent = send(connection_fd, buffer, bytes_received, 0);
+        check_error((int)bytes_sent, "send failed");
     }
+
+    int error = close(connection_fd);
+    check_error(error, "close failed");
 
     return NULL;
 }
@@ -230,7 +249,14 @@ void *accept_connections(void *arg) {
         int connect_fd = accept(socket_fd, NULL, NULL);
         check_error(connect_fd, "accept failed");
 
-        int error = pthread_create(&thread_id, NULL, send_status, NULL);
+        int *fd_ptr = malloc(sizeof(int));
+        if (fd_ptr == NULL) {
+            perror("malloc failed");
+            return NULL;
+        }
+        *fd_ptr = connect_fd;
+
+        int error = pthread_create(&thread_id, NULL, send_status, fd_ptr);
         check_pthread_error(error, "pthread_create failed");
     }
 
