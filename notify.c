@@ -1,6 +1,9 @@
 #define _POSIX_C_SOURCE 200809L
 #include <sys/inotify.h>
 #include <sys/stat.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,6 +15,7 @@
 #include <semaphore.h>
 #include <stdbool.h>
 
+#define PORT 41212
 #define CORE_BUFFER_SIZE 100
 #define BUFFER_SIZE 500
 #define MAX_SUBFOLDERS 2000
@@ -25,7 +29,7 @@ char current_core[CORE_BUFFER_SIZE];
 char current_game[BUFFER_SIZE];
 char event_buffer[BUFFER_SIZE];
 int game_wds[MAX_SUBFOLDERS];
-int notify_fd, core_wd;
+int socket_fd, notify_fd, core_wd;
 bool running;
 
 sem_t game_sem, core_sem;
@@ -174,6 +178,29 @@ void add_interrupt_handler() {
     check_error(error, "sigaction failed");
 }
 
+int init_tcp(uint16_t port) {
+    int socket_fd = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
+    check_error(socket_fd, "socket failed");
+    int reuse_address = 1;
+    int error = setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, &reuse_address, sizeof(int));
+    check_error(error, "setsockopt failed");
+  
+    struct sockaddr_in sa;
+    memset(&sa, 0, sizeof(sa));
+  
+    sa.sin_family = AF_INET;
+    sa.sin_port = htons(port);
+    sa.sin_addr.s_addr = htonl(INADDR_ANY);
+  
+    error = bind(socket_fd, (struct sockaddr *)&sa, sizeof(sa));
+    check_error(error, "bind failed");
+  
+    error = listen(socket_fd, 10);
+    check_error(error, "listen failed");
+
+    return socket_fd;
+}
+
 void initialise() {
 
     add_interrupt_handler();
@@ -194,6 +221,8 @@ void initialise() {
     check_error(error, "sem_init failed");
     error = sem_init(&core_sem, 0, 1);
     check_error(error, "sem_init failed");
+
+    socket_fd = init_tcp(PORT);
 }
 
 void finalise() {
@@ -204,6 +233,9 @@ void finalise() {
     check_error(error, "sem_destroy failed");
     error = sem_destroy(&core_sem);
     check_error(error, "sem_destroy failed");
+
+    error = close(socket_fd);
+    check_error(error, "close failed");
 }
 
 int main() {
