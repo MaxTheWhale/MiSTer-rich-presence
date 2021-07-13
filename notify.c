@@ -13,6 +13,7 @@
 #include <errno.h>
 #include <signal.h>
 #include <semaphore.h>
+#include <pthread.h>
 #include <stdbool.h>
 
 #define PORT 41212
@@ -33,6 +34,7 @@ int socket_fd, notify_fd, core_wd;
 bool running;
 
 sem_t game_sem, core_sem;
+pthread_t tcp_thread;
 
 void int_handler(int signal) {
     running = false;
@@ -42,7 +44,15 @@ void check_error(int error, const char message[]) {
     if (error < 0) {
         if (!running && errno == EINTR) return;
         perror(message);
-        exit(1);
+        exit(EXIT_FAILURE);
+    }
+}
+
+void check_pthread_error(int error, const char message[]) {
+    if (error > 0) {
+        errno = error;
+        perror(message);
+        exit(EXIT_FAILURE);
     }
 }
 
@@ -201,6 +211,41 @@ int init_tcp(uint16_t port) {
     return socket_fd;
 }
 
+void *send_status(void *arg) {
+    pthread_detach(pthread_self());
+
+    while (running) {
+        
+    }
+
+    return NULL;
+}
+
+void *accept_connections(void *arg) {
+    
+    pthread_detach(pthread_self());
+    pthread_t thread_id;
+  
+    while (running) {
+        int connect_fd = accept(socket_fd, NULL, NULL);
+        check_error(connect_fd, "accept failed");
+
+        int error = pthread_create(&thread_id, NULL, send_status, NULL);
+        check_pthread_error(error, "pthread_create failed");
+    }
+
+    return NULL;
+}
+
+pthread_t start_tcp_thread(int socket_fd) {
+    pthread_t thread_id;
+
+    int error = pthread_create(&thread_id, NULL, accept_connections, NULL);
+    check_pthread_error(error, "pthread_create failed");
+
+    return thread_id;
+}
+
 void initialise() {
 
     add_interrupt_handler();
@@ -223,6 +268,7 @@ void initialise() {
     check_error(error, "sem_init failed");
 
     socket_fd = init_tcp(PORT);
+    tcp_thread = start_tcp_thread(socket_fd);
 }
 
 void finalise() {
@@ -236,6 +282,9 @@ void finalise() {
 
     error = close(socket_fd);
     check_error(error, "close failed");
+
+    error = pthread_cancel(tcp_thread);
+    check_pthread_error(error, "pthread_cancel failed");
 }
 
 int main() {
@@ -255,5 +304,5 @@ int main() {
 
     finalise();
 
-    return 0;
+    return EXIT_SUCCESS;
 }
