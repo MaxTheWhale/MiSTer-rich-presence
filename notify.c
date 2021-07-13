@@ -9,6 +9,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <signal.h>
+#include <semaphore.h>
 #include <stdbool.h>
 
 #define CORE_BUFFER_SIZE 100
@@ -26,6 +27,8 @@ char event_buffer[BUFFER_SIZE];
 int game_wds[MAX_SUBFOLDERS];
 int notify_fd, core_wd;
 bool running;
+
+sem_t game_sem, core_sem;
 
 void int_handler(int signal) {
     running = false;
@@ -134,7 +137,9 @@ ssize_t read_events(char *buffer) {
 }
 
 void switch_to_core(const char new_core[]) {
+    check_error(sem_wait(&core_sem), "sem_wait failed");
     strcpy(current_core, new_core);
+    check_error(sem_post(&core_sem), "sem_post failed");
     printf("Switched to %s\n", current_core);
     add_game_watches(notify_fd, current_core);
 }
@@ -149,7 +154,9 @@ void process_event(const inotify_event *event) {
     } else if (event->len > 1 && !(event->mask & IN_ISDIR)) {
         const char *new_game = event->name;
         if (strcmp(current_game, new_game) != 0) {
+            check_error(sem_wait(&game_sem), "sem_wait failed");
             strcpy(current_game, new_game);
+            check_error(sem_post(&game_sem), "sem_post failed");
             printf("Started playing %s\n", current_game);
         }
     }
@@ -182,11 +189,21 @@ void initialise() {
     }
     core_wd = inotify_add_watch(notify_fd, COREPATH, IN_MODIFY);
     check_error(core_wd, "inotify_add_watch failed");
+
+    int error = sem_init(&game_sem, 0, 1);
+    check_error(error, "sem_init failed");
+    error = sem_init(&core_sem, 0, 1);
+    check_error(error, "sem_init failed");
 }
 
 void finalise() {
     int error = close(notify_fd);
     check_error(error, "close failed");
+
+    error = sem_destroy(&game_sem);
+    check_error(error, "sem_destroy failed");
+    error = sem_destroy(&core_sem);
+    check_error(error, "sem_destroy failed");
 }
 
 int main() {
