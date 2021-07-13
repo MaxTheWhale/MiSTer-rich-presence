@@ -12,11 +12,11 @@
 #include <dirent.h>
 #include <errno.h>
 #include <signal.h>
-#include <semaphore.h>
 #include <pthread.h>
 #include <stdbool.h>
 
 #define PORT 41212
+#define MAX_CONNECTIONS 10
 #define CORE_BUFFER_SIZE 100
 #define BUFFER_SIZE 500
 #define MAX_SUBFOLDERS 2000
@@ -30,10 +30,10 @@ char current_core[CORE_BUFFER_SIZE];
 char current_game[BUFFER_SIZE];
 char event_buffer[BUFFER_SIZE];
 int game_wds[MAX_SUBFOLDERS];
+int connection_fds[MAX_CONNECTIONS];
 int socket_fd, notify_fd, core_wd;
 bool running;
 
-sem_t game_sem, core_sem;
 pthread_t tcp_thread;
 
 void int_handler(int signal) {
@@ -150,10 +150,32 @@ ssize_t read_events(char *buffer) {
     return bytes_read;
 }
 
+ssize_t make_status_message(char *buffer) {
+    ssize_t length = sprintf(buffer, "%s/%s", current_core, current_game);
+
+    return length;
+}
+
+void broadcast_status() {
+    char buffer[BUFFER_SIZE];
+
+    ssize_t msg_length = make_status_message(buffer);
+    for (int index = 0; index < MAX_CONNECTIONS; index++) {
+        if (connection_fds[index] >= 0) {
+            ssize_t bytes_sent = send(connection_fds[index], buffer, msg_length, MSG_NOSIGNAL);
+
+            if (bytes_sent <= 0) {
+                int error = close(connection_fds[index]);
+                check_error(error, "close failed");
+                connection_fds[index] = -1;
+            }
+        }
+    }
+}
+
 void switch_to_core(const char new_core[]) {
-    check_error(sem_wait(&core_sem), "sem_wait failed");
     strcpy(current_core, new_core);
-    check_error(sem_post(&core_sem), "sem_post failed");
+    strcpy(current_game, "");
     printf("Switched to %s\n", current_core);
     add_game_watches(notify_fd, current_core);
 }
@@ -164,14 +186,14 @@ void process_event(const inotify_event *event) {
         get_core_name(COREPATH, new_core);
         if (new_core[0] != '\0' && strcmp(current_core, new_core) != 0) {
             switch_to_core(new_core);
+            broadcast_status();
         }
     } else if (event->len > 1 && !(event->mask & IN_ISDIR)) {
         const char *new_game = event->name;
         if (strcmp(current_game, new_game) != 0) {
-            check_error(sem_wait(&game_sem), "sem_wait failed");
             strcpy(current_game, new_game);
-            check_error(sem_post(&game_sem), "sem_post failed");
             printf("Started playing %s\n", current_game);
+            broadcast_status();
         }
     }
 }
@@ -211,53 +233,26 @@ int init_tcp(uint16_t port) {
     return socket_fd;
 }
 
-void *send_status(void *arg) {
-    pthread_detach(pthread_self());
-
-    int connection_fd = *(int*)arg;
-    free(arg);
-
-    char buffer[BUFFER_SIZE];
-
-    while (running) {
-        ssize_t bytes_received = recv(connection_fd, buffer, BUFFER_SIZE, 0);
-        check_error((int)bytes_received, "recv failed");
-        buffer[bytes_received] = '\0';
-
-        if (bytes_received == 0) {
-            int error = close(connection_fd);
-            check_error(error, "close failed");
-            return NULL;
-        }
-
-        ssize_t bytes_sent = send(connection_fd, buffer, bytes_received, 0);
-        check_error((int)bytes_sent, "send failed");
-    }
-
-    int error = close(connection_fd);
-    check_error(error, "close failed");
-
-    return NULL;
-}
-
 void *accept_connections(void *arg) {
     
     pthread_detach(pthread_self());
-    pthread_t thread_id;
   
     while (running) {
-        int connect_fd = accept(socket_fd, NULL, NULL);
-        check_error(connect_fd, "accept failed");
+        int connection_fd = accept(socket_fd, NULL, NULL);
+        check_error(connection_fd, "accept failed");
 
-        int *fd_ptr = malloc(sizeof(int));
-        if (fd_ptr == NULL) {
-            perror("malloc failed");
-            return NULL;
+        int index = 0;
+        while (connection_fds[index] >= 0 && index < MAX_CONNECTIONS) index++;
+        if (index == MAX_CONNECTIONS) {
+            puts("accept_connections failed: MAX_CONNECTIONS exceeded");
+            exit(EXIT_FAILURE);
         }
-        *fd_ptr = connect_fd;
 
-        int error = pthread_create(&thread_id, NULL, send_status, fd_ptr);
-        check_pthread_error(error, "pthread_create failed");
+        connection_fds[index] = connection_fd;
+        int error = shutdown(connection_fd, SHUT_RD);
+        check_error(error, "shutdown failed");
+
+        broadcast_status();
     }
 
     return NULL;
@@ -276,9 +271,6 @@ void initialise() {
 
     add_interrupt_handler();
 
-    strcpy(current_core, "");
-    strcpy(current_game, "");
-
     notify_fd = inotify_init();
     check_error(notify_fd, "inotify_init failed");
 
@@ -288,10 +280,13 @@ void initialise() {
     core_wd = inotify_add_watch(notify_fd, COREPATH, IN_MODIFY);
     check_error(core_wd, "inotify_add_watch failed");
 
-    int error = sem_init(&game_sem, 0, 1);
-    check_error(error, "sem_init failed");
-    error = sem_init(&core_sem, 0, 1);
-    check_error(error, "sem_init failed");
+    get_core_name(COREPATH, current_core);
+    add_game_watches(notify_fd, current_core);
+    strcpy(current_game, "");
+
+    for (int i = 0; i < MAX_CONNECTIONS; i++) {
+        connection_fds[i] = -1;
+    }
 
     socket_fd = init_tcp(PORT);
     tcp_thread = start_tcp_thread(socket_fd);
@@ -300,11 +295,6 @@ void initialise() {
 void finalise() {
     int error = close(notify_fd);
     check_error(error, "close failed");
-
-    error = sem_destroy(&game_sem);
-    check_error(error, "sem_destroy failed");
-    error = sem_destroy(&core_sem);
-    check_error(error, "sem_destroy failed");
 
     error = close(socket_fd);
     check_error(error, "close failed");
