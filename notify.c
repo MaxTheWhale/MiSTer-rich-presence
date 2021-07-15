@@ -11,6 +11,7 @@
 #include <fcntl.h>
 #include <dirent.h>
 #include <errno.h>
+#include <time.h>
 #include <signal.h>
 #include <pthread.h>
 #include <stdbool.h>
@@ -32,6 +33,7 @@ char event_buffer[BUFFER_SIZE];
 int game_wds[MAX_SUBFOLDERS];
 int connection_fds[MAX_CONNECTIONS];
 int socket_fd, notify_fd, core_wd;
+time_t start_time;
 bool running;
 
 pthread_t tcp_thread;
@@ -151,8 +153,15 @@ ssize_t read_events(char *buffer) {
 }
 
 ssize_t make_status_message(char *buffer) {
-    ssize_t length = sprintf(buffer, "%s/%s", current_core, current_game);
-
+    ssize_t length = 0;
+    time_t current_time = time(NULL);
+    if (current_time >= (time_t)(0) && start_time >= (time_t)(0)) {
+        time_t elapsed = current_time - start_time;
+        length = sprintf(buffer, "%s/%s/%ld", current_core, current_game, elapsed);
+    } else {
+        length = sprintf(buffer, "%s/%s/", current_core, current_game);
+    }
+    
     return length;
 }
 
@@ -176,6 +185,7 @@ void broadcast_status() {
 void switch_to_core(const char new_core[]) {
     strcpy(current_core, new_core);
     strcpy(current_game, "");
+    start_time = (time_t)(-1);
     printf("Switched to %s\n", current_core);
     add_game_watches(notify_fd, current_core);
 }
@@ -193,6 +203,10 @@ void process_event(const inotify_event *event) {
         if (strcmp(current_game, new_game) != 0) {
             strcpy(current_game, new_game);
             printf("Started playing %s\n", current_game);
+            start_time = time(NULL);
+            if (start_time == (time_t)(-1)) {
+                puts("process_event: getting time failed");
+            }
             broadcast_status();
         }
     }
@@ -283,6 +297,8 @@ void initialise() {
     get_core_name(COREPATH, current_core);
     add_game_watches(notify_fd, current_core);
     strcpy(current_game, "");
+
+    start_time = (time_t)(-1);
 
     for (int i = 0; i < MAX_CONNECTIONS; i++) {
         connection_fds[i] = -1;
