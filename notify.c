@@ -13,7 +13,7 @@
 #include <errno.h>
 #include <time.h>
 #include <signal.h>
-#include <pthread.h>
+#include <poll.h>
 #include <stdbool.h>
 
 #define PORT 41212
@@ -27,16 +27,17 @@
 typedef struct inotify_event inotify_event;
 typedef struct dirent dirent;
 
+enum { SOCKET_FD, NOTIFY_FD, NUM_FDS };
+
 char current_core[CORE_BUFFER_SIZE];
 char current_game[BUFFER_SIZE];
 char event_buffer[BUFFER_SIZE];
 int game_wds[MAX_SUBFOLDERS];
 int connection_fds[MAX_CONNECTIONS];
-int socket_fd, notify_fd, core_wd;
+int core_wd;
+struct pollfd fds[NUM_FDS];
 time_t start_time;
 bool running;
-
-pthread_t tcp_thread;
 
 void int_handler(int signal) {
     running = false;
@@ -45,14 +46,6 @@ void int_handler(int signal) {
 void check_error(int error, const char message[]) {
     if (error < 0) {
         if (!running && errno == EINTR) return;
-        perror(message);
-        exit(EXIT_FAILURE);
-    }
-}
-
-void check_pthread_error(int error, const char message[]) {
-    if (error > 0) {
-        errno = error;
         perror(message);
         exit(EXIT_FAILURE);
     }
@@ -147,7 +140,7 @@ void get_core_name(const char path[], char *buffer) {
 }
 
 ssize_t read_events(char *buffer) {
-    ssize_t bytes_read = read(notify_fd, buffer, BUFFER_SIZE);
+    ssize_t bytes_read = read(fds[NOTIFY_FD].fd, buffer, BUFFER_SIZE);
     check_error((int)bytes_read, "event read failed");
     return bytes_read;
 }
@@ -187,7 +180,7 @@ void switch_to_core(const char new_core[]) {
     strcpy(current_game, "");
     start_time = (time_t)(-1);
     printf("Switched to %s\n", current_core);
-    add_game_watches(notify_fd, current_core);
+    add_game_watches(fds[NOTIFY_FD].fd, current_core);
 }
 
 void process_event(const inotify_event *event) {
@@ -247,55 +240,40 @@ int init_tcp(uint16_t port) {
     return socket_fd;
 }
 
-void *accept_connections(void *arg) {
-    
-    pthread_detach(pthread_self());
-  
-    while (running) {
-        int connection_fd = accept(socket_fd, NULL, NULL);
-        check_error(connection_fd, "accept failed");
+void accept_connection() {
+    int connection_fd = accept(fds[SOCKET_FD].fd, NULL, NULL);
+    check_error(connection_fd, "accept failed");
 
-        int index = 0;
-        while (connection_fds[index] >= 0 && index < MAX_CONNECTIONS) index++;
-        if (index == MAX_CONNECTIONS) {
-            puts("accept_connections failed: MAX_CONNECTIONS exceeded");
-            exit(EXIT_FAILURE);
-        }
-
-        connection_fds[index] = connection_fd;
-        int error = shutdown(connection_fd, SHUT_RD);
-        check_error(error, "shutdown failed");
-
-        broadcast_status();
+    int index = 0;
+    while (connection_fds[index] >= 0 && index < MAX_CONNECTIONS) index++;
+    if (index == MAX_CONNECTIONS) {
+        puts("accept_connections failed: MAX_CONNECTIONS exceeded");
+        exit(EXIT_FAILURE);
     }
 
-    return NULL;
-}
+    connection_fds[index] = connection_fd;
+    int error = shutdown(connection_fd, SHUT_RD);
+    check_error(error, "shutdown failed");
 
-pthread_t start_tcp_thread(int socket_fd) {
-    pthread_t thread_id;
-
-    int error = pthread_create(&thread_id, NULL, accept_connections, NULL);
-    check_pthread_error(error, "pthread_create failed");
-
-    return thread_id;
+    broadcast_status();
 }
 
 void initialise() {
 
     add_interrupt_handler();
 
-    notify_fd = inotify_init();
-    check_error(notify_fd, "inotify_init failed");
+    fds[NOTIFY_FD].fd = inotify_init();
+    check_error(fds[NOTIFY_FD].fd, "inotify_init failed");
+    fds[NOTIFY_FD].events = POLLIN;
 
     for (int i = 0; i < MAX_SUBFOLDERS; i++) {
         game_wds[i] = -1;
     }
-    core_wd = inotify_add_watch(notify_fd, COREPATH, IN_MODIFY);
+    core_wd = inotify_add_watch(fds[NOTIFY_FD].fd, COREPATH, IN_MODIFY);
     check_error(core_wd, "inotify_add_watch failed");
 
     get_core_name(COREPATH, current_core);
-    add_game_watches(notify_fd, current_core);
+    add_game_watches(fds[NOTIFY_FD].fd, current_core);
     strcpy(current_game, "");
 
     start_time = (time_t)(-1);
@@ -304,33 +282,39 @@ void initialise() {
         connection_fds[i] = -1;
     }
 
-    socket_fd = init_tcp(PORT);
-    tcp_thread = start_tcp_thread(socket_fd);
+    fds[SOCKET_FD].fd = init_tcp(PORT);
+    fds[SOCKET_FD].events = POLLIN;
 }
 
 void finalise() {
-    int error = close(notify_fd);
+    int error = close(fds[NOTIFY_FD].fd);
     check_error(error, "close failed");
 
-    error = close(socket_fd);
+    error = close(fds[SOCKET_FD].fd);
     check_error(error, "close failed");
-
-    error = pthread_cancel(tcp_thread);
-    check_pthread_error(error, "pthread_cancel failed");
 }
 
 int main() {
 
     initialise();
 
-    while (running) {   
-        ssize_t read_size = read_events(event_buffer);
-        ssize_t bytes_processed = 0;
-        while (bytes_processed < read_size) {
-            const inotify_event *event = (inotify_event*)(event_buffer + bytes_processed);
-            process_event(event);
-            ssize_t event_size = (sizeof(inotify_event) + event->len);
-            bytes_processed += event_size;
+    while (running) {
+        int error = poll(fds, NUM_FDS, -1);
+        check_error(error, "poll failed");
+
+        if (fds[NOTIFY_FD].revents & POLLIN) {
+            ssize_t read_size = read_events(event_buffer);
+            ssize_t bytes_processed = 0;
+            while (bytes_processed < read_size) {
+                const inotify_event *event = (inotify_event*)(event_buffer + bytes_processed);
+                process_event(event);
+                ssize_t event_size = (sizeof(inotify_event) + event->len);
+                bytes_processed += event_size;
+            }   
+        }
+
+        if (fds[SOCKET_FD].revents & POLLIN) {
+            accept_connection();
         }
     }
 
