@@ -12,6 +12,8 @@ public class MiSTerRichPresence
 {
     private const ushort DEFAULT_PORT = 41212;
     private const long CLIENT_ID = 864611729572495370;
+    private const string CORENAME_FILE = "config/cores.txt";
+    private const string GAMEFILTER_FILE = "config/filters.txt";
 
     private static Discord.Discord discord = null;
     private static Socket misterSocket = null;
@@ -278,8 +280,8 @@ public class MiSTerRichPresence
             return;
         }
 
-        coreDict = LoadCoreNames("cores.txt");
-        filters = LoadGameFilters("filters.txt");
+        coreDict = LoadCoreNames(CORENAME_FILE);
+        filters = LoadGameFilters(GAMEFILTER_FILE);
 
         AppDomain.CurrentDomain.ProcessExit += new EventHandler(OnProcessExit);
     }

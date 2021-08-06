@@ -1,0 +1,4 @@
+"(\.[^.]*)$",""
+"(\[.*\])",""
+"(\(((USA|Japan|Europe|Asia|Korea|Australia|Spain|Sweden|Italy|Germany|France|China|World|PAL|NTSC|Unl|Rev .*|v.*)(, )?)+\))",""
+"(.*)(, The)$","The $1"
