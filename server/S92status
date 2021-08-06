@@ -1,0 +1,34 @@
+#!/bin/sh
+#
+# Start the MiSTer status service
+#
+
+PID=$(pidof -s mister_status)
+
+case "$1" in
+  start)
+        printf "Starting MiSTer status serivce: "
+        if [ -z "$PID" ]
+        then
+                nohup mister_status > /dev/null &
+        fi
+        [ $? = 0 ] && echo "OK" || echo "FAIL"
+        ;;
+  stop)
+        printf "Stopping MiSTer status service: "
+        if [ ! -z "$PID" ]
+        then
+                kill ${PID}
+        fi
+        [ $? = 0 ] && echo "OK" || echo "FAIL"
+        ;;
+  restart|reload)
+        "$0" stop
+        "$0" start
+        ;;
+  *)
+        echo "Usage: $0 {start|stop|restart}"
+        exit 1
+esac
+
+exit $?
