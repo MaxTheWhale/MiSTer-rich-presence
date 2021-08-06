@@ -2,9 +2,8 @@
 BASE    = /opt/gcc-linaro-7.5.0-2019.12-x86_64_arm-linux-gnueabihf/bin/arm-linux-gnueabihf
 
 CC      = $(BASE)-gcc
-LD      = $(BASE)-ld
 
 CFLAGS  = -Wall -pedantic -std=c11
 
-notify: notify.c
+mister_status: mister_status.c
 	$(CC) $(CFLAGS) -o $@ $<
