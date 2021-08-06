@@ -1,3 +1,7 @@
 *.o
 *.exe
-mister_status
+server/mister_status
+client/MiSTerStatus/bin
+client/MiSTerStatus/obj
+client/MiSTerStatus/.vs
+client/MiSTerStatus/DiscordGameSDK
