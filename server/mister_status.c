@@ -29,6 +29,8 @@ typedef struct dirent dirent;
 
 enum { SOCKET_FD, NOTIFY_FD, NUM_FDS };
 
+const char *allowed_extensions[] = {"nes", "md", "cue"};
+
 char current_core[CORE_BUFFER_SIZE];
 char current_game[BUFFER_SIZE];
 char event_buffer[BUFFER_SIZE];
@@ -83,6 +85,27 @@ bool is_folder(const char path[]) {
     int error = stat(path, &file_stat);
     check_error(error, "stat failed");
     return (file_stat.st_mode & S_IFDIR);
+}
+
+const char *get_extension(const char *filename) {
+    const char *extension = "";
+    while (*filename != '\0') {
+        if (*filename == '.') {
+            extension = filename + 1;
+        }
+        filename++;
+    }
+    return extension;
+}
+
+const bool check_extension(const char *filename) {
+    const char *extension = get_extension(filename);
+    for (int index = 0; index < (sizeof(allowed_extensions) / sizeof(char*)); index++) {
+        if (strcmp(extension, allowed_extensions[index]) == 0) {
+            return true;
+        }
+    }
+    return false;
 }
 
 int process_folder(int notify_fd, char path[], int index);
@@ -193,6 +216,9 @@ void process_event(const inotify_event *event) {
         }
     } else if (event->len > 1 && !(event->mask & IN_ISDIR)) {
         const char *new_game = event->name;
+        if (!check_extension(new_game)) {
+            return;
+        }
         if (strcmp(current_game, new_game) != 0) {
             strcpy(current_game, new_game);
             printf("Started playing %s\n", current_game);
@@ -218,7 +244,7 @@ void add_interrupt_handler() {
 }
 
 int init_tcp(uint16_t port) {
-    int socket_fd = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
+    int socket_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     check_error(socket_fd, "socket failed");
     int reuse_address = 1;
     int error = setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, &reuse_address, sizeof(int));
