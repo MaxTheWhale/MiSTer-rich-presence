@@ -5,5 +5,5 @@ CFLAGS  = -Wall -pedantic -std=c11
 
 SOURCES = $(wildcard *.c)
 
-mister_status: *.c
+mister-status: *.c
 	$(CC) $(CFLAGS) -o $@ $(SOURCES)

@@ -1,7 +1,7 @@
 RELEASE_URL=https://github.com/MaxTheWhale/MiSTer-rich-presence/releases/latest/download/server.zip
 OUTPUT_FILE=release.zip
 
-BIN_FILE=mister_status
+BIN_FILE=mister-status
 SVC_FILE=S92status
 SCRIPTS_DIR=scripts
 

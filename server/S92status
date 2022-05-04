@@ -3,14 +3,14 @@
 # Start the MiSTer status service
 #
 
-PID=$(pidof -s mister_status)
+PID=$(pidof -s mister-status)
 
 case "$1" in
   start)
         printf "Starting MiSTer status serivce: "
         if [ -z "$PID" ]
         then
-                nohup mister_status > /dev/null &
+                nohup mister-status > /dev/null &
         fi
         [ $? = 0 ] && echo "OK" || echo "FAIL"
         ;;
