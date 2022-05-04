@@ -1,20 +1,20 @@
 #define _POSIX_C_SOURCE 200809L
-#include <sys/inotify.h>
-#include <sys/stat.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
+#include "error.h"
+#include "network.h"
+#include <dirent.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <poll.h>
+#include <signal.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <dirent.h>
-#include <errno.h>
+#include <sys/inotify.h>
+#include <sys/stat.h>
 #include <time.h>
-#include <signal.h>
-#include <poll.h>
-#include <stdbool.h>
+#include <unistd.h>
+
 
 #define PORT 41212
 #define MAX_CONNECTIONS 10
@@ -39,286 +39,226 @@ struct pollfd fds[NUM_FDS];
 time_t start_time;
 bool running;
 
-void int_handler(int signal) {
-    running = false;
-}
-
-void check_error(int error, const char message[]) {
-    if (error < 0) {
-        if (!running && errno == EINTR) return;
-        perror(message);
-        exit(EXIT_FAILURE);
-    }
-}
+void int_handler(int signal) { running = false; }
 
 dirent *readdir_check(DIR *dir) {
-    errno = 0;
-    dirent *file = readdir(dir);
-    if (file == NULL && errno > 0) {
-        perror("readdir failed");
-        exit(1);
-    }
-    return file;
+  errno = 0;
+  dirent *file = readdir(dir);
+  if (file == NULL && errno > 0) {
+    perror("readdir failed");
+    exit(1);
+  }
+  return file;
 }
 
 DIR *open_game_dir(const char path[]) {
-    DIR *game_dir = opendir(path);
-    if (game_dir == NULL) {
-        if (errno == ENOENT) {
-            return NULL;
-        } else {
-            perror("opendir failed");
-            exit(1);
-        }
+  DIR *game_dir = opendir(path);
+  if (game_dir == NULL) {
+    if (errno == ENOENT) {
+      return NULL;
+    } else {
+      perror("opendir failed");
+      exit(1);
     }
-    return game_dir;
+  }
+  return game_dir;
 }
 
-bool is_hidden_file(const dirent *file) {
-    return (file->d_name[0] == '.');
-}
+bool is_hidden_file(const dirent *file) { return (file->d_name[0] == '.'); }
 
 bool is_folder(const char path[]) {
-    struct stat file_stat;
-    int error = stat(path, &file_stat);
-    check_error(error, "stat failed");
-    return (file_stat.st_mode & S_IFDIR);
+  struct stat file_stat;
+  int error = stat(path, &file_stat);
+  error_check(error, "stat failed");
+  return (file_stat.st_mode & S_IFDIR);
 }
 
 int process_folder(int notify_fd, char path[], int index);
 int process_folder(int notify_fd, char path[], int index) {
-    char *sub_path = path + strlen(path);
+  char *sub_path = path + strlen(path);
 
-    DIR *game_dir = open_game_dir(path);
-    if (game_dir == NULL) return -1;
+  DIR *game_dir = open_game_dir(path);
+  if (game_dir == NULL)
+    return -1;
 
-    game_wds[index] = inotify_add_watch(notify_fd, path, IN_ACCESS | IN_ONLYDIR);
-    check_error(game_wds[index], "inotify_add_watch failed");
+  game_wds[index] = inotify_add_watch(notify_fd, path, IN_ACCESS | IN_ONLYDIR);
+  error_check(game_wds[index], "inotify_add_watch failed");
 
-    dirent *file = readdir_check(game_dir);
-    while (file != NULL) {
-        if (!is_hidden_file(file)) {
-            sprintf(sub_path, "/%s", file->d_name);
-            if (is_folder(path)) {
-                index = process_folder(notify_fd, path, index + 1);
-            }
-        }
-        file = readdir_check(game_dir);
+  dirent *file = readdir_check(game_dir);
+  while (file != NULL) {
+    if (!is_hidden_file(file)) {
+      sprintf(sub_path, "/%s", file->d_name);
+      if (is_folder(path)) {
+        index = process_folder(notify_fd, path, index + 1);
+      }
     }
+    file = readdir_check(game_dir);
+  }
 
-    int error = closedir(game_dir);
-    check_error(error, "closedir failed");
+  int error = closedir(game_dir);
+  error_check(error, "closedir failed");
 
-    strcpy(sub_path, "");
-    return index;
+  strcpy(sub_path, "");
+  return index;
 }
 
 void add_game_watches(int notify_fd, const char current_core[]) {
 
-    char game_path[BUFFER_SIZE];
-    sprintf(game_path, "%s%s", BASE_GAMEPATH, current_core);
+  char game_path[BUFFER_SIZE];
+  sprintf(game_path, "%s%s", BASE_GAMEPATH, current_core);
 
-    for (int i = 0; i < MAX_SUBFOLDERS && game_wds[i] >= 0; i++) {
-        int error = inotify_rm_watch(notify_fd, game_wds[i]);
-        check_error(error, "inotify_rm_watch failed");
-        game_wds[i] = -1;
-    }
+  for (int i = 0; i < MAX_SUBFOLDERS && game_wds[i] >= 0; i++) {
+    int error = inotify_rm_watch(notify_fd, game_wds[i]);
+    error_check(error, "inotify_rm_watch failed");
+    game_wds[i] = -1;
+  }
 
-    process_folder(notify_fd, game_path, 0);
+  process_folder(notify_fd, game_path, 0);
 }
 
 void get_core_name(const char path[], char *buffer) {
-    int file_fd = open(path, O_RDONLY);
-    check_error(file_fd, "open failed");
+  int file_fd = open(path, O_RDONLY);
+  error_check(file_fd, "open failed");
 
-    ssize_t bytes_read = read(file_fd, buffer, BUFFER_SIZE);
-    check_error((int)bytes_read, "read failed");
-    buffer[bytes_read] = '\0';
+  ssize_t bytes_read = read(file_fd, buffer, BUFFER_SIZE);
+  error_check((int)bytes_read, "read failed");
+  buffer[bytes_read] = '\0';
 
-    int error = close(file_fd);
-    check_error(error, "close failed");
+  int error = close(file_fd);
+  error_check(error, "close failed");
 }
 
 ssize_t read_events(char *buffer) {
-    ssize_t bytes_read = read(fds[NOTIFY_FD].fd, buffer, BUFFER_SIZE);
-    check_error((int)bytes_read, "event read failed");
-    return bytes_read;
+  ssize_t bytes_read = read(fds[NOTIFY_FD].fd, buffer, BUFFER_SIZE);
+  error_check((int)bytes_read, "event read failed");
+  return bytes_read;
 }
 
 ssize_t make_status_message(char *buffer) {
-    ssize_t length = 0;
-    time_t current_time = time(NULL);
-    if (current_time >= (time_t)(0) && start_time >= (time_t)(0)) {
-        time_t elapsed = current_time - start_time;
-        length = sprintf(buffer, "%s/%s/%ld", current_core, current_game, elapsed);
-    } else {
-        length = sprintf(buffer, "%s/%s/", current_core, current_game);
-    }
-    
-    return length;
+  ssize_t length = 0;
+  time_t current_time = time(NULL);
+  if (current_time >= (time_t)(0) && start_time >= (time_t)(0)) {
+    time_t elapsed = current_time - start_time;
+    length = sprintf(buffer, "%s/%s/%ld", current_core, current_game, elapsed);
+  } else {
+    length = sprintf(buffer, "%s/%s/", current_core, current_game);
+  }
+
+  return length;
 }
 
 void broadcast_status() {
-    char buffer[BUFFER_SIZE];
+  char buffer[BUFFER_SIZE];
 
-    ssize_t msg_length = make_status_message(buffer);
-    for (int index = 0; index < MAX_CONNECTIONS; index++) {
-        if (connection_fds[index] >= 0) {
-            ssize_t bytes_sent = send(connection_fds[index], buffer, msg_length, MSG_NOSIGNAL);
-
-            if (bytes_sent <= 0) {
-                int error = close(connection_fds[index]);
-                check_error(error, "close failed");
-                connection_fds[index] = -1;
-            }
-        }
-    }
+  ssize_t msg_length = make_status_message(buffer);
+  network_broadcast(buffer, msg_length);
 }
 
 void switch_to_core(const char new_core[]) {
-    strcpy(current_core, new_core);
-    strcpy(current_game, "");
-    start_time = (time_t)(-1);
-    printf("Switched to %s\n", current_core);
-    add_game_watches(fds[NOTIFY_FD].fd, current_core);
+  strcpy(current_core, new_core);
+  strcpy(current_game, "");
+  start_time = (time_t)(-1);
+  printf("Switched to %s\n", current_core);
+  add_game_watches(fds[NOTIFY_FD].fd, current_core);
 }
 
 void process_event(const inotify_event *event) {
-    if (event->wd == core_wd) {
-        char new_core[CORE_BUFFER_SIZE];
-        get_core_name(COREPATH, new_core);
-        if (new_core[0] != '\0' && strcmp(current_core, new_core) != 0) {
-            switch_to_core(new_core);
-            broadcast_status();
-        }
-    } else if (event->len > 1 && !(event->mask & IN_ISDIR)) {
-        const char *new_game = event->name;
-        if (strcmp(current_game, new_game) != 0) {
-            strcpy(current_game, new_game);
-            printf("Started playing %s\n", current_game);
-            start_time = time(NULL);
-            if (start_time == (time_t)(-1)) {
-                puts("process_event: getting time failed");
-            }
-            broadcast_status();
-        }
+  if (event->wd == core_wd) {
+    char new_core[CORE_BUFFER_SIZE];
+    get_core_name(COREPATH, new_core);
+    if (new_core[0] != '\0' && strcmp(current_core, new_core) != 0) {
+      switch_to_core(new_core);
+      broadcast_status();
     }
+  } else if (event->len > 1 && !(event->mask & IN_ISDIR)) {
+    const char *new_game = event->name;
+    if (strcmp(current_game, new_game) != 0) {
+      strcpy(current_game, new_game);
+      printf("Started playing %s\n", current_game);
+      start_time = time(NULL);
+      if (start_time == (time_t)(-1)) {
+        puts("process_event: getting time failed");
+      }
+      broadcast_status();
+    }
+  }
 }
 
 void add_interrupt_handler() {
-    running = true;
+  running = true;
 
-    struct sigaction action;
-    action.sa_flags = 0;
-    sigemptyset(&action.sa_mask);
-    action.sa_handler = int_handler;
+  struct sigaction action;
+  action.sa_flags = 0;
+  sigemptyset(&action.sa_mask);
+  action.sa_handler = int_handler;
 
-    int error = sigaction(SIGINT, &action, NULL);
-    check_error(error, "sigaction failed");
-}
-
-int init_tcp(uint16_t port) {
-    int socket_fd = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
-    check_error(socket_fd, "socket failed");
-    int reuse_address = 1;
-    int error = setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, &reuse_address, sizeof(int));
-    check_error(error, "setsockopt failed");
-  
-    struct sockaddr_in sa;
-    memset(&sa, 0, sizeof(sa));
-  
-    sa.sin_family = AF_INET;
-    sa.sin_port = htons(port);
-    sa.sin_addr.s_addr = htonl(INADDR_ANY);
-  
-    error = bind(socket_fd, (struct sockaddr *)&sa, sizeof(sa));
-    check_error(error, "bind failed");
-  
-    error = listen(socket_fd, 10);
-    check_error(error, "listen failed");
-
-    return socket_fd;
-}
-
-void accept_connection() {
-    int connection_fd = accept(fds[SOCKET_FD].fd, NULL, NULL);
-    check_error(connection_fd, "accept failed");
-
-    int index = 0;
-    while (connection_fds[index] >= 0 && index < MAX_CONNECTIONS) index++;
-    if (index == MAX_CONNECTIONS) {
-        puts("accept_connections failed: MAX_CONNECTIONS exceeded");
-        exit(EXIT_FAILURE);
-    }
-
-    connection_fds[index] = connection_fd;
-    int error = shutdown(connection_fd, SHUT_RD);
-    check_error(error, "shutdown failed");
-
-    broadcast_status();
+  int error = sigaction(SIGINT, &action, NULL);
+  error_check(error, "sigaction failed");
 }
 
 void initialise() {
 
-    add_interrupt_handler();
+  add_interrupt_handler();
 
-    fds[NOTIFY_FD].fd = inotify_init();
-    check_error(fds[NOTIFY_FD].fd, "inotify_init failed");
-    fds[NOTIFY_FD].events = POLLIN;
+  fds[NOTIFY_FD].fd = inotify_init();
+  error_check(fds[NOTIFY_FD].fd, "inotify_init failed");
+  fds[NOTIFY_FD].events = POLLIN;
 
-    for (int i = 0; i < MAX_SUBFOLDERS; i++) {
-        game_wds[i] = -1;
-    }
-    core_wd = inotify_add_watch(fds[NOTIFY_FD].fd, COREPATH, IN_MODIFY);
-    check_error(core_wd, "inotify_add_watch failed");
+  for (int i = 0; i < MAX_SUBFOLDERS; i++) {
+    game_wds[i] = -1;
+  }
+  core_wd = inotify_add_watch(fds[NOTIFY_FD].fd, COREPATH, IN_MODIFY);
+  error_check(core_wd, "inotify_add_watch failed");
 
-    get_core_name(COREPATH, current_core);
-    add_game_watches(fds[NOTIFY_FD].fd, current_core);
-    strcpy(current_game, "");
+  get_core_name(COREPATH, current_core);
+  add_game_watches(fds[NOTIFY_FD].fd, current_core);
+  strcpy(current_game, "");
 
-    start_time = (time_t)(-1);
+  start_time = (time_t)(-1);
 
-    for (int i = 0; i < MAX_CONNECTIONS; i++) {
-        connection_fds[i] = -1;
-    }
+  for (int i = 0; i < MAX_CONNECTIONS; i++) {
+    connection_fds[i] = -1;
+  }
 
-    fds[SOCKET_FD].fd = init_tcp(PORT);
-    fds[SOCKET_FD].events = POLLIN;
+  fds[SOCKET_FD].fd = network_init(PORT);
+  fds[SOCKET_FD].events = POLLIN;
 }
 
 void finalise() {
-    int error = close(fds[NOTIFY_FD].fd);
-    check_error(error, "close failed");
+  int error = close(fds[NOTIFY_FD].fd);
+  error_check(error, "close failed");
 
-    error = close(fds[SOCKET_FD].fd);
-    check_error(error, "close failed");
+  error = close(fds[SOCKET_FD].fd);
+  error_check(error, "close failed");
 }
 
 int main() {
 
-    initialise();
+  initialise();
 
-    while (running) {
-        int error = poll(fds, NUM_FDS, -1);
-        check_error(error, "poll failed");
+  while (running) {
+    int error = poll(fds, NUM_FDS, -1);
+    error_check(error, "poll failed");
 
-        if (fds[NOTIFY_FD].revents & POLLIN) {
-            ssize_t read_size = read_events(event_buffer);
-            ssize_t bytes_processed = 0;
-            while (bytes_processed < read_size) {
-                const inotify_event *event = (inotify_event*)(event_buffer + bytes_processed);
-                process_event(event);
-                ssize_t event_size = (sizeof(inotify_event) + event->len);
-                bytes_processed += event_size;
-            }   
-        }
-
-        if (fds[SOCKET_FD].revents & POLLIN) {
-            accept_connection();
-        }
+    if (fds[NOTIFY_FD].revents & POLLIN) {
+      ssize_t read_size = read_events(event_buffer);
+      ssize_t bytes_processed = 0;
+      while (bytes_processed < read_size) {
+        const inotify_event *event =
+            (inotify_event *)(event_buffer + bytes_processed);
+        process_event(event);
+        ssize_t event_size = (sizeof(inotify_event) + event->len);
+        bytes_processed += event_size;
+      }
     }
 
-    finalise();
+    if (fds[SOCKET_FD].revents & POLLIN) {
+      network_accept();
+      broadcast_status();
+    }
+  }
 
-    return EXIT_SUCCESS;
+  finalise();
+
+  return EXIT_SUCCESS;
 }
