@@ -21,4 +21,4 @@ jobs:
     - name: Check linting
       uses: HorstBaerbel/action-clang-tidy@1.2
       with:
-        scandir: 'server/src'
+        scandir: 'server'
