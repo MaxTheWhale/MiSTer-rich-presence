@@ -1,6 +1,8 @@
 #define _POSIX_C_SOURCE 200809L
 #include "network.h"
+
 #include "error.h"
+
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <stdio.h>
@@ -15,7 +17,8 @@ int socket_fd;
 int connection_fds[MAX_CONNECTIONS];
 
 int network_init(uint16_t port)
-{socket_fd = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
+{
+    socket_fd = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
     error_check(socket_fd, "socket failed");
     int reuse_address = 1;
     int error = setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, &reuse_address, sizeof(int));

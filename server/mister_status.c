@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "error.h"
 #include "network.h"
+
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -126,7 +127,6 @@ int process_folder(int notify_fd, char path[], int index)
 
 void add_game_watches(int notify_fd, const char current_core[])
 {
-
     char game_path[BUFFER_SIZE];
     sprintf(game_path, "%s%s", BASE_GAMEPATH, current_core);
 
@@ -238,7 +238,6 @@ void add_interrupt_handler()
 
 void initialise()
 {
-
     add_interrupt_handler();
 
     fds[NOTIFY_FD].fd = inotify_init();
@@ -278,7 +277,6 @@ void finalise()
 
 int main()
 {
-
     initialise();
 
     while (running)
