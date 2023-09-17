@@ -1,6 +1,13 @@
 *.o
 *.exe
-server/mister_status
+
+*.cmake
+CMakeCache.txt
+CMakeFiles
+Makefile
+
+server/mister-status
+
 client/MiSTerStatus/bin
 client/MiSTerStatus/obj
 client/MiSTerStatus/.vs

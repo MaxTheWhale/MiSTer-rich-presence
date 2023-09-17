@@ -44,7 +44,7 @@ struct pollfd fds[NUM_FDS];
 time_t start_time;
 bool running;
 
-void int_handler(int signal)
+void int_handler()
 {
     running = false;
 }
