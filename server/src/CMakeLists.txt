@@ -3,4 +3,5 @@ target_sources(mister-status
         mister_status.c
         error.c
         network.c
+        helpers.c
 )
