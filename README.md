@@ -13,10 +13,10 @@ starter guide. Once the project has been built, the `discord_game_sdk.dll` file
 needs to be copied to the directory containing the executable.
 
 # Installing on MiSTer
-To install the server on your MiSTer, copy the binary `mister_status` to the
+To install the server on your MiSTer, copy the binary `mister-status` to the
 `/sbin` directory. This can then be run manually using:
 
-`> nohup mister_status > /dev/null &`
+`> nohup mister-status > /dev/null &`
 
 To make the status server start automatically on boot, copy the file `S92status`
 to the `/etc/init.d` directory.

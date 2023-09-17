@@ -40,7 +40,7 @@ int network_init(uint16_t port)
     return socket_fd;
 }
 
-void network_accept()
+void network_accept(void)
 {
     int connection_fd = accept(socket_fd, NULL, NULL);
     error_check(connection_fd, "accept failed");

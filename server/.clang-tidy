@@ -1,0 +1,9 @@
+Checks: 
+  - 'clang-diagnostic-*'
+  - 'clang-analyzer-*'
+  - '-clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling'
+WarningsAsErrors: '*'
+HeaderFileExtensions:
+  - h
+ImplementationFileExtensions:
+  - c

@@ -1,10 +1,12 @@
 *.o
 *.exe
+.vscode
 
 *.cmake
 CMakeCache.txt
 CMakeFiles
 Makefile
+compile_commands.json
 
 server/mister-status
 

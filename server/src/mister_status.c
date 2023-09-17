@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include "error.h"
+#include "helpers.h"
 #include "network.h"
 
 #include <dirent.h>
@@ -44,8 +45,9 @@ struct pollfd fds[NUM_FDS];
 time_t start_time;
 bool running;
 
-void int_handler()
+void int_handler(int signal)
 {
+    printf("Received %s, exiting...\n", strsignal(signal));
     running = false;
 }
 
@@ -92,10 +94,10 @@ bool is_folder(const char path[])
     return (file_stat.st_mode & S_IFDIR);
 }
 
-int process_folder(int notify_fd, char path[], int index);
-int process_folder(int notify_fd, char path[], int index)
+int process_folder(int notify_fd, char path[], int max_path_length, int index);
+int process_folder(int notify_fd, char path[], int max_path_length, int index)
 {
-    char *sub_path = path + strlen(path);
+    int current_path_length = strlen(path);
 
     DIR *game_dir = open_game_dir(path);
     if (game_dir == NULL)
@@ -109,10 +111,15 @@ int process_folder(int notify_fd, char path[], int index)
     {
         if (!is_hidden_file(file))
         {
-            sprintf(sub_path, "/%s", file->d_name);
+            int file_name_length = strlen(file->d_name);
+            if (current_path_length + file_name_length + 1 >= max_path_length)
+            {
+                return -1;
+            }
+            sprintf(path + current_path_length, "/%s", file->d_name);
             if (is_folder(path))
             {
-                index = process_folder(notify_fd, path, index + 1);
+                index = process_folder(notify_fd, path, max_path_length, index + 1);
             }
         }
         file = readdir_check(game_dir);
@@ -121,7 +128,7 @@ int process_folder(int notify_fd, char path[], int index)
     int error = closedir(game_dir);
     error_check(error, "closedir failed");
 
-    strcpy(sub_path, "");
+    strcpy_safe(path + current_path_length, "", 1);
     return index;
 }
 
@@ -137,7 +144,7 @@ void add_game_watches(int notify_fd, const char current_core[])
         game_wds[i] = -1;
     }
 
-    process_folder(notify_fd, game_path, 0);
+    process_folder(notify_fd, game_path, sizeof(game_path), 0);
 }
 
 void get_core_name(const char path[], char *buffer)
@@ -177,7 +184,7 @@ ssize_t make_status_message(char *buffer)
     return length;
 }
 
-void broadcast_status()
+void broadcast_status(void)
 {
     char buffer[BUFFER_SIZE];
 
@@ -187,7 +194,7 @@ void broadcast_status()
 
 void switch_to_core(const char new_core[])
 {
-    strcpy(current_core, new_core);
+    strcpy_safe(current_core, new_core, sizeof(current_core));
     strcpy(current_game, "");
     start_time = (time_t)(-1);
     printf("Switched to %s\n", current_core);
@@ -211,7 +218,7 @@ void process_event(const inotify_event *event)
         const char *new_game = event->name;
         if (strcmp(current_game, new_game) != 0)
         {
-            strcpy(current_game, new_game);
+            strcpy_safe(current_game, new_game, sizeof(current_game));
             printf("Started playing %s\n", current_game);
             start_time = time(NULL);
             if (start_time == (time_t)(-1))
@@ -223,7 +230,7 @@ void process_event(const inotify_event *event)
     }
 }
 
-void add_interrupt_handler()
+void add_interrupt_handler(void)
 {
     running = true;
 
@@ -236,7 +243,7 @@ void add_interrupt_handler()
     error_check(error, "sigaction failed");
 }
 
-void initialise()
+void initialise(void)
 {
     add_interrupt_handler();
 
@@ -266,7 +273,7 @@ void initialise()
     fds[SOCKET_FD].events = POLLIN;
 }
 
-void finalise()
+void finalise(void)
 {
     int error = close(fds[NOTIFY_FD].fd);
     error_check(error, "close failed");
@@ -275,7 +282,7 @@ void finalise()
     error_check(error, "close failed");
 }
 
-int main()
+int main(void)
 {
     initialise();
 
