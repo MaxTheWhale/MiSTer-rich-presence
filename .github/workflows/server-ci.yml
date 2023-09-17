@@ -7,7 +7,7 @@ on:
     branches: [ "master" ]
 
 jobs:
-  build:
+  server-ci:
 
     runs-on: ubuntu-latest
 
@@ -18,3 +18,7 @@ jobs:
       with:
         clang-format-version: '16'
         check-path: 'server/src'
+    - name: Check linting
+      uses: HorstBaerbel/action-clang-tidy@1.2
+      with:
+        scandir: 'server'
