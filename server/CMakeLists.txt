@@ -22,7 +22,7 @@ set(H_FILES "$<TARGET_PROPERTY:mister-status,HEADER_SET>")
 
 add_custom_target(
     tidy
-    COMMAND clang-tidy "${C_FILES}" "${H_FILES}"
+    COMMAND clang-tidy --quiet "${C_FILES}" "${H_FILES}"
     COMMAND_EXPAND_LISTS
     VERBATIM
 )

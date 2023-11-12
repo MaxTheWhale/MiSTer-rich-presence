@@ -8,17 +8,19 @@ on:
 
 jobs:
   server-ci:
-
     runs-on: ubuntu-latest
-
     steps:
-    - uses: actions/checkout@v3
-    - name: Check formatting
-      uses: jidicula/clang-format-action@v4.11.0
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build
+        uses: docker/build-push-action@v5
+        with:
+          context: ./server
+          outputs: build
+      - name: Upload server binary
+      uses: actions/upload-artifact@v3
       with:
-        clang-format-version: '16'
-        check-path: 'server/src'
-    - name: Check linting
-      uses: HorstBaerbel/action-clang-tidy@1.2
-      with:
-        scandir: 'server'
+        name: mister-status
+        path: build/mister-status
