@@ -11,9 +11,3 @@ COPY src/*.c src/*.h src/CMakeLists.txt src/
 COPY .clang-format .clang-tidy CMakeLists.txt .
 
 RUN cmake .
-RUN make tidy
-RUN make format-check
-RUN make
-
-FROM scratch AS export-stage
-COPY --from=build-stage /src/mister-status /

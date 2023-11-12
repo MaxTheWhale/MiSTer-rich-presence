@@ -14,12 +14,18 @@ jobs:
       uses: actions/checkout@v4
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
-    - name: Build
+    - name: Build docker image
       uses: docker/build-push-action@v5
       with:
         context: ./server
-        outputs: build
-    - name: Upload server binary
+        tags: server-image
+    - name: Check linting
+      run: docker run server-image make tidy
+    - name: Check formatting
+      run: docker run server-image make format-check
+    - name: Build
+      run: docker run -v ./build:/build server-image /bin/bash -c 'make && cp mister-status /build'
+    - name: Upload binary
       uses: actions/upload-artifact@v3
       with:
         name: mister-status
