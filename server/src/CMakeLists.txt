@@ -4,4 +4,8 @@ target_sources(mister-status
         error.c
         network.c
         helpers.c
+    PRIVATE FILE_SET HEADERS FILES
+        error.h
+        helpers.h
+        network.h
 )

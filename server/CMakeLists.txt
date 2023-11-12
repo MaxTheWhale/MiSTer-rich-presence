@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.23)
 
 project(
     MiSTer-rich-presence
@@ -16,3 +16,27 @@ add_compile_options(-Wall -Wextra -pedantic -Werror)
 
 add_executable(mister-status)
 add_subdirectory(src)
+
+set(C_FILES "$<TARGET_PROPERTY:mister-status,SOURCES>")
+set(H_FILES "$<TARGET_PROPERTY:mister-status,HEADER_SET>")
+
+add_custom_target(
+    tidy
+    COMMAND clang-tidy "${C_FILES}" "${H_FILES}"
+    COMMAND_EXPAND_LISTS
+    VERBATIM
+)
+
+add_custom_target(
+    format
+    COMMAND clang-format -i --verbose "${C_FILES}" "${H_FILES}"
+    COMMAND_EXPAND_LISTS
+    VERBATIM
+)
+
+add_custom_target(
+    format-check
+    COMMAND clang-format --Werror --dry-run "${C_FILES}" "${H_FILES}"
+    COMMAND_EXPAND_LISTS
+    VERBATIM
+)
